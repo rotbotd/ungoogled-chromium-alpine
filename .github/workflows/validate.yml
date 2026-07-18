@@ -19,7 +19,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build validation image
-        run: docker build --tag ungoogled-chromium-alpine-builder .
+        run: >-
+          docker build
+          --file Containerfile
+          --tag ungoogled-chromium-alpine-builder
+          .
 
       - name: Validate APKBUILD and scripts
         run: docker run --rm ungoogled-chromium-alpine-builder validate

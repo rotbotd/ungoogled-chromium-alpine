@@ -49,7 +49,11 @@ runs:
     - name: Build Alpine builder image
       if: inputs.previous-finished != 'true'
       shell: bash
-      run: docker build --tag ungoogled-chromium-alpine-builder .
+      run: >-
+        docker build
+        --file Containerfile
+        --tag ungoogled-chromium-alpine-builder
+        .
 
     - name: Run compilation stage
       if: inputs.previous-finished != 'true'
