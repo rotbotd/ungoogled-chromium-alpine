@@ -603,6 +603,7 @@ prepare() {
 	rm -rv third_party/devtools-frontend/src/node_modules/esbuild
 	ln -sv /usr/lib/node_modules/esbuild third_party/devtools-frontend/src/node_modules/esbuild
 
+	mkdir -p third_party/gperf/cipd/bin
 	ln -sv /usr/bin/gperf third_party/gperf/cipd/bin/
 
 	for _arch in amd64 arm64 ""; do
