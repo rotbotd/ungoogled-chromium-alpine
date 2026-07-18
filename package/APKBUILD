@@ -8,6 +8,7 @@ pkgrel=0
 _uc_rev=1
 _uc_ver=$pkgver-$_uc_rev
 _copium_tag=150.0
+builddir="$srcdir/chromium-$pkgver"
 # DEPS file -> deps['src/third_party/test_fonts']['objects'][0]['object_name']
 # (for the given version, when it changes)
 _testfonts=a28b222b79851716f8358d2800157d9ffe117b3545031ae51f69b7e1e1b9a969
