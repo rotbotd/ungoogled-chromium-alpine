@@ -826,7 +826,7 @@ build() {
 		chrome \
 		chrome_sandbox \
 		headless_shell \
-		chromedriver.unstripped \
+		chromedriver \
 		chrome_crashpad_handler \
 		$(want_check && echo \
 			base_unittests \
@@ -923,7 +923,7 @@ package() {
 	install -Dm755 libqt6_shim.so -t "$pkgdir"/usr/lib/$pkgname/
 
 	# chromedriver
-	install -Dm755 chromedriver.unstripped "$pkgdir"/usr/lib/$pkgname/chromedriver
+	install -Dm755 chromedriver "$pkgdir"/usr/lib/$pkgname/chromedriver
 	ln -sfv ../lib/$pkgname/chromedriver "$pkgdir"/usr/bin/chromedriver
 
 	# headless shell
