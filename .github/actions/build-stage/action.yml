@@ -1,0 +1,115 @@
+name: Build stage
+description: Resume or advance the Chromium compilation in a fresh runner
+
+inputs:
+  stage-number:
+    description: Sequential stage number
+    required: true
+  previous-finished:
+    description: Whether an earlier stage completed the packages
+    required: false
+    default: "false"
+  progress-name:
+    description: Checkpoint artifact from the previous stage
+    required: false
+    default: ""
+
+outputs:
+  finished:
+    description: Whether the APK packages have been produced
+    value: ${{ steps.result.outputs.finished }}
+
+runs:
+  using: composite
+  steps:
+    - name: Free runner disk space
+      if: inputs.previous-finished != 'true'
+      shell: bash
+      run: |
+        sudo rm -rf \
+          /usr/share/dotnet \
+          /usr/local/lib/android \
+          /opt/ghc \
+          /opt/hostedtoolcache/CodeQL
+        docker system prune --all --force
+        df -h /
+
+    - name: Download previous checkpoint
+      if: inputs.previous-finished != 'true' && inputs.progress-name != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.progress-name }}
+        path: input
+
+    - name: Create stage directories
+      if: inputs.previous-finished != 'true'
+      shell: bash
+      run: mkdir -p input output progress
+
+    - name: Build Alpine builder image
+      if: inputs.previous-finished != 'true'
+      shell: bash
+      run: docker build --tag ungoogled-chromium-alpine-builder .
+
+    - name: Run compilation stage
+      if: inputs.previous-finished != 'true'
+      shell: bash
+      run: |
+        docker run --rm \
+          --ulimit nofile=4096:4096 \
+          --mount "type=bind,source=$PWD/input,target=/mnt/input" \
+          --mount "type=bind,source=$PWD/output,target=/mnt/output" \
+          --mount "type=bind,source=$PWD/progress,target=/mnt/progress" \
+          ungoogled-chromium-alpine-builder stage
+
+    - name: Determine stage result
+      id: result
+      shell: bash
+      env:
+        PREVIOUS_FINISHED: ${{ inputs.previous-finished }}
+      run: |
+        if [[ "$PREVIOUS_FINISHED" == "true" || -f progress/finished ]]; then
+          echo "finished=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "finished=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Upload compilation checkpoint
+      if: steps.result.outputs.finished != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: progress-${{ github.run_id }}-${{ inputs.stage-number }}
+        path: |
+          progress/progress.tar.zst
+          progress/progress.tar.zst.sha256
+        retention-days: 1
+        compression-level: 0
+        if-no-files-found: error
+
+    - name: Upload APK packages
+      if: inputs.previous-finished != 'true' && steps.result.outputs.finished == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: packages
+        path: output/
+        retention-days: 7
+        compression-level: 0
+        if-no-files-found: error
+
+    - name: Delete superseded checkpoint
+      if: inputs.previous-finished != 'true' && inputs.progress-name != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PROGRESS_NAME: ${{ inputs.progress-name }}
+      run: |
+        artifact_id=$(
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts" \
+            --paginate \
+            --jq ".artifacts[] | select(.name == \"$PROGRESS_NAME\") | .id" \
+            | head -n 1
+        )
+        if [[ -n "$artifact_id" ]]; then
+          gh api --method DELETE \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id"
+        fi
