@@ -1,6 +1,9 @@
 name: Cloudflare RBE smoke test
 
 on:
+  push:
+    branches:
+      - experiment/cloudflare-rbe
   workflow_dispatch:
 
 permissions:
@@ -95,6 +98,7 @@ jobs:
             build \
             --remote_executor=grpc://127.0.0.1:8980 \
             --remote_instance_name=alpine \
+            --remote_default_exec_properties=InputRootAbsolutePath=/home/builder/package/src/chromium-150.0.7871.128 \
             --remote_default_exec_properties=OSFamily=linux \
             --remote_default_exec_properties=container-image=docker://ungoogled-chromium-alpine-rbe \
             --remote_download_outputs=all \

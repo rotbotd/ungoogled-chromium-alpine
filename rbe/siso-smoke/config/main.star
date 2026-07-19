@@ -7,6 +7,7 @@ def init(ctx):
     step_config = {
         "platforms": {
             "default": {
+                "InputRootAbsolutePath": "/home/builder/package/src/chromium-150.0.7871.128",
                 "OSFamily": "linux",
                 "container-image": "docker://ungoogled-chromium-alpine-rbe",
             },

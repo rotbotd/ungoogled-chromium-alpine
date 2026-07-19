@@ -1,6 +1,6 @@
 --- a/build/config/siso/clang_unix.star
 +++ b/build/config/siso/clang_unix.star
-@@ -84,7 +84,75 @@ def __rules(ctx):
+@@ -84,7 +84,78 @@ def __rules(ctx):
      use_thin_lto = gn_logs_data.get("use_thin_lto") == "true"
      remote_link_timeout = "80m" if use_thin_lto else "10m"
  
@@ -13,10 +13,11 @@
 +            "handler": "clang_compile",
 +            "action": "(.*_)?cxx",
 +            "command_prefix": "clang++ ",
++            "inputs": ["buildtools/third_party/libc++/__config_site"],
 +            "exclude_input_patterns": ["*.stamp"],
 +            "remote": True,
 +            "use_system_input": True,
-+            "input_root_absolute_path": input_root_absolute_path,
++            "input_root_absolute_path": True,
 +            "timeout": "2m",
 +        },
 +        {
@@ -24,10 +25,11 @@
 +            "handler": "clang_compile",
 +            "action": "(.*_)?cxx_module",
 +            "command_prefix": "clang++ ",
++            "inputs": ["buildtools/third_party/libc++/__config_site"],
 +            "exclude_input_patterns": ["*.stamp"],
 +            "remote": True,
 +            "use_system_input": True,
-+            "input_root_absolute_path": input_root_absolute_path,
++            "input_root_absolute_path": True,
 +            "timeout": "2m",
 +        },
 +        {
@@ -38,7 +40,7 @@
 +            "exclude_input_patterns": ["*.stamp"],
 +            "remote": True,
 +            "use_system_input": True,
-+            "input_root_absolute_path": input_root_absolute_path,
++            "input_root_absolute_path": True,
 +            "timeout": "2m",
 +        },
 +        {
@@ -46,10 +48,11 @@
 +            "handler": "clang_compile",
 +            "action": "(.*_)?objcxx",
 +            "command_prefix": "clang++ ",
++            "inputs": ["buildtools/third_party/libc++/__config_site"],
 +            "exclude_input_patterns": ["*.stamp"],
 +            "remote": True,
 +            "use_system_input": True,
-+            "input_root_absolute_path": input_root_absolute_path_for_objc,
++            "input_root_absolute_path": True,
 +            "timeout": "2m",
 +        },
 +        {
@@ -60,7 +63,7 @@
 +            "exclude_input_patterns": ["*.stamp"],
 +            "remote": True,
 +            "use_system_input": True,
-+            "input_root_absolute_path": input_root_absolute_path_for_objc,
++            "input_root_absolute_path": True,
 +            "timeout": "2m",
 +        },
 +        {
@@ -70,7 +73,7 @@
 +            "command_prefix": "clang ",
 +            "remote": True,
 +            "use_system_input": True,
-+            "input_root_absolute_path": input_root_absolute_path,
++            "input_root_absolute_path": True,
 +            "timeout": "2m",
 +        },
 +    ]

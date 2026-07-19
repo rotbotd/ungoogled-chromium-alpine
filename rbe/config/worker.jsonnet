@@ -19,6 +19,7 @@ local common = import 'worker-common.libsonnet';
       instanceNamePrefix: 'alpine',
       platform: {
         properties: [
+          { name: 'InputRootAbsolutePath', value: '/home/builder/package/src/chromium-150.0.7871.128' },
           { name: 'OSFamily', value: 'linux' },
           { name: 'container-image', value: 'docker://ungoogled-chromium-alpine-rbe' },
         ],
