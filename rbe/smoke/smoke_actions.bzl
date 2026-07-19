@@ -1,9 +1,9 @@
 def smoke_actions():
     outputs = []
     for index in range(64):
-        output = "remote-action-%02d.txt" % index
+        output = "remote-action-%s.txt" % index
         native.genrule(
-            name = "remote_action_%02d" % index,
+            name = "remote_action_%s" % index,
             outs = [output],
             cmd = "sleep 2 && echo remote-execution-ok > $@",
         )
