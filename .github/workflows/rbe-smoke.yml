@@ -72,6 +72,15 @@ jobs:
             | sha256sum --check -
           sudo install -m 0755 bazelisk-linux-amd64 /usr/local/bin/bazel
 
+      - name: Install Chromium Siso
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          GOBIN="${RUNNER_TEMP}/bin" \
+            go install go.chromium.org/build/siso@v1.5.16
+          sudo install -m 0755 "${RUNNER_TEMP}/bin/siso" /usr/local/bin/siso
+          siso version
+
       - name: Run parallel remote actions
         id: smoke
         continue-on-error: true
@@ -93,6 +102,18 @@ jobs:
             --spawn_strategy=remote \
             --jobs=16 \
             //:all
+
+          cd ../siso-smoke
+          ./generate.sh
+          RBE_service_no_security=true \
+            siso ninja \
+              -C . \
+              -config_repo_dir config \
+              -reapi_address 127.0.0.1:8980 \
+              -reapi_instance alpine \
+              -remote_jobs 16 \
+              -output_local_strategy full \
+              all
 
       - name: Record result
         if: always()

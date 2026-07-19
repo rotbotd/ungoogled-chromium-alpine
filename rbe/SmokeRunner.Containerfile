@@ -1,10 +1,10 @@
-FROM ubuntu:22.04
+FROM alpine:edge
 
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+RUN apk add --no-cache \
         bash \
-        build-essential \
+        build-base \
         ca-certificates \
+        clang22 \
         coreutils \
+        lld22 \
         python3 \
-    && rm -rf /var/lib/apt/lists/*
