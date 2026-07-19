@@ -5,7 +5,7 @@ The `APKBUILD` starts with Alpine's `community/chromium` recipe and applies the
 matching ungoogled-chromium patch bundle before Chromium is configured.
 
 The recipe is pinned to Chromium and ungoogled-chromium
-`150.0.7871.128-1`. It currently targets `x86_64`.
+`150.0.7871.128-1`. It targets `x86_64` and `aarch64`.
 
 ## Inputs
 
@@ -53,21 +53,40 @@ and artifact storage.
 ## GitHub Actions
 
 `Validate` builds the container and runs the lightweight checks on pushes and
-pull requests. `Build APK packages` is manually dispatched and splits the
-Chromium compilation across seven GitHub-hosted jobs. Each stage runs for up to
-five hours and uploads a compressed build-tree checkpoint for the next stage.
-Superseded checkpoints are deleted after the next stage succeeds.
+pull requests. `Distributed Chromium build` is manually dispatched with one of
+four modes:
 
-Start and monitor the full build with GitHub CLI:
+- `validate` checks workflows, shell, package metadata, Compose files, and both
+  Buildbarn worker configurations without starting RBE.
+- `infrastructure-dry-run` runs two x86_64 coordinator stages and two workers,
+  uploading and restoring small synthetic checkpoints.
+- `checkpoint-canary` runs two 15-minute x86_64 compilation stages with eight
+  workers to exercise real remote execution and checkpoint restoration.
+- `full` builds x86_64 and aarch64 independently. Each target uses eight workers
+  and up to four 120-minute coordinator stages.
+
+The distributed workflow needs two named Cloudflare tunnels protected by the
+same Access service token:
+
+- Secret `CLOUDFLARE_TUNNEL_TOKEN_X86_64`
+- Secret `CLOUDFLARE_TUNNEL_TOKEN_AARCH64`
+- Variable `RBE_TUNNEL_HOSTNAME_X86_64`
+- Variable `RBE_TUNNEL_HOSTNAME_AARCH64`
+
+Run the modes in order and monitor them with GitHub CLI:
 
 ```sh
-gh workflow run build.yml
-gh run list --workflow build.yml
-gh run watch
+gh workflow run rbe-build.yml -f mode=validate
+gh workflow run rbe-build.yml -f mode=infrastructure-dry-run
+gh workflow run rbe-build.yml -f mode=checkpoint-canary
+gh workflow run rbe-build.yml -f mode=full
+gh run list --workflow rbe-build.yml
+gh run watch RUN_ID
 ```
 
-Completed APKs and `SHA256SUMS` are stored in the `packages` workflow artifact
-for seven days.
+Completed APKs and `SHA256SUMS` are stored in architecture-specific workflow
+artifacts for seven days. Checkpoints are retained for one day and superseded
+checkpoints are deleted after the next stage succeeds.
 
 ## Inspect the builder
 

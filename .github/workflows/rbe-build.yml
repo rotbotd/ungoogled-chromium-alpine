@@ -2,160 +2,112 @@ name: Distributed Chromium build
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Validation depth
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - infrastructure-dry-run
+          - checkpoint-canary
+          - full
 
 permissions:
   actions: write
   contents: read
 
 concurrency:
-  group: cloudflare-rbe-tunnel
+  group: cloudflare-rbe-tunnels
   cancel-in-progress: false
 
 jobs:
-  coordinator_1:
-    name: coordinator-1
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    env:
-      TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+  preflight:
+    name: Validate distributed build configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - id: stage
-        uses: ./.github/actions/rbe-coordinator-stage
-        with:
-          stage-number: 1
-          stage-timeout: 270m
 
-  workers_1:
-    name: worker-${{ matrix.worker }}
-    strategy:
-      fail-fast: false
-      matrix:
-        worker: ["1", "2", "3", "4", "5", "6"]
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    env:
-      CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
-      CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
-      RBE_TUNNEL_HOSTNAME: ${{ vars.RBE_TUNNEL_HOSTNAME }}
-      RBE_WORKER_ID: ${{ matrix.worker }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/rbe-worker-stage
-        with:
-          stage-number: 1
-
-  coordinator_2:
-    name: coordinator-2
-    needs: [coordinator_1, workers_1]
-    if: needs.coordinator_1.outputs.finished != 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    env:
-      TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
-    steps:
-      - uses: actions/checkout@v5
-      - id: stage
-        uses: ./.github/actions/rbe-coordinator-stage
-        with:
-          stage-number: 2
-          previous-checkpoint: rbe-progress-${{ github.run_id }}-1
-          stage-timeout: 270m
-
-  workers_2:
-    name: worker-${{ matrix.worker }}
-    needs: [coordinator_1, workers_1]
-    if: needs.coordinator_1.outputs.finished != 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        worker: ["1-2", "2-2", "3-2", "4-2", "5-2", "6-2"]
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    env:
-      CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
-      CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
-      RBE_TUNNEL_HOSTNAME: ${{ vars.RBE_TUNNEL_HOSTNAME }}
-      RBE_WORKER_ID: ${{ matrix.worker }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/rbe-worker-stage
-        with:
-          stage-number: 2
-
-  coordinator_3:
-    name: coordinator-3
-    needs: [coordinator_2, workers_2]
-    if: needs.coordinator_2.outputs.finished != 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    outputs:
-      finished: ${{ steps.stage.outputs.finished }}
-    env:
-      TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
-    steps:
-      - uses: actions/checkout@v5
-      - id: stage
-        uses: ./.github/actions/rbe-coordinator-stage
-        with:
-          stage-number: 3
-          previous-checkpoint: rbe-progress-${{ github.run_id }}-2
-          stage-timeout: 300m
-
-  workers_3:
-    name: worker-${{ matrix.worker }}
-    needs: [coordinator_2, workers_2]
-    if: needs.coordinator_2.outputs.finished != 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        worker: ["1-3", "2-3", "3-3", "4-3", "5-3", "6-3"]
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    env:
-      CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
-      CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
-      RBE_TUNNEL_HOSTNAME: ${{ vars.RBE_TUNNEL_HOSTNAME }}
-      RBE_WORKER_ID: ${{ matrix.worker }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/rbe-worker-stage
-        with:
-          stage-number: 3
-
-  verify_result:
-    name: Verify packages
-    if: always()
-    needs:
-      - coordinator_1
-      - workers_1
-      - coordinator_2
-      - workers_2
-      - coordinator_3
-      - workers_3
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      FINISHED: ${{ needs.coordinator_1.outputs.finished == 'true' || needs.coordinator_2.outputs.finished == 'true' || needs.coordinator_3.outputs.finished == 'true' }}
-    steps:
-      - name: Require a completed build
-        if: env.FINISHED != 'true'
+      - name: Validate workflow syntax
         run: |
-          echo "All three compilation stages ended without producing packages" >&2
-          exit 1
+          docker run --rm \
+            -v "$PWD:/repo" \
+            -w /repo \
+            rhysd/actionlint:1.7.7
 
-      - name: Download APK packages
-        if: env.FINISHED == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: distributed-packages
-          path: packages
+      - name: Validate shell and package metadata
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jsonnet shellcheck
+          shellcheck \
+            podman.sh \
+            scripts/ci-rbe.sh \
+            scripts/ci-stage.sh \
+            scripts/container-entrypoint.sh
+          docker build \
+            --file Containerfile \
+            --tag ungoogled-chromium-alpine-builder \
+            .
+          docker run --rm ungoogled-chromium-alpine-builder validate
+          docker run --rm \
+            --entrypoint /bin/sh \
+            ungoogled-chromium-alpine-builder \
+            -n /usr/local/bin/ci-rbe
 
-      - name: Verify package checksums
-        if: env.FINISHED == 'true'
-        working-directory: packages
-        run: sha256sum -c SHA256SUMS
+      - name: Validate both worker configurations
+        run: |
+          for target in x86_64 aarch64; do
+            jsonnet \
+              -J rbe/config \
+              --ext-str GITHUB_RUN_ID=dry-run \
+              --ext-str RBE_TARGET="$target" \
+              --ext-str RBE_WORKER_ID=1 \
+              rbe/config/worker.jsonnet > /dev/null
+            GITHUB_RUN_ID=dry-run \
+            CLOUDFLARE_ACCESS_CLIENT_ID=dry-run \
+            CLOUDFLARE_ACCESS_CLIENT_SECRET=dry-run \
+            RBE_TARGET="$target" \
+            RBE_TUNNEL_HOSTNAME=example.invalid \
+            RBE_WORKER_ID=1 \
+              docker compose -f rbe/worker.compose.yml config --quiet
+          done
+          docker compose -f rbe/coordinator.compose.yml config --quiet
+
+  x64:
+    name: x86_64
+    if: inputs.mode != 'validate'
+    needs: preflight
+    uses: ./.github/workflows/rbe-target.yml
+    with:
+      target: x86_64
+      runner: ubuntu-24.04
+      tunnel-hostname: ${{ vars.RBE_TUNNEL_HOSTNAME_X86_64 }}
+      worker-matrix: ${{ inputs.mode == 'infrastructure-dry-run' && '["1","2"]' || '["1","2","3","4","5","6","7","8"]' }}
+      stage-count: ${{ inputs.mode == 'full' && 4 || 2 }}
+      stage-timeout: ${{ inputs.mode == 'full' && '120m' || inputs.mode == 'checkpoint-canary' && '15m' || '1m' }}
+      dry-run: ${{ inputs.mode == 'infrastructure-dry-run' }}
+      require-complete: ${{ inputs.mode == 'full' }}
+    secrets:
+      tunnel-token: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN_X86_64 }}
+      access-client-id: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
+      access-client-secret: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
+
+  arm64:
+    name: aarch64
+    if: inputs.mode == 'full'
+    needs: preflight
+    uses: ./.github/workflows/rbe-target.yml
+    with:
+      target: aarch64
+      runner: ubuntu-24.04-arm
+      tunnel-hostname: ${{ vars.RBE_TUNNEL_HOSTNAME_AARCH64 }}
+      worker-matrix: '["1","2","3","4","5","6","7","8"]'
+      stage-count: 4
+      stage-timeout: 120m
+      require-complete: true
+    secrets:
+      tunnel-token: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN_AARCH64 }}
+      access-client-id: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
+      access-client-secret: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}

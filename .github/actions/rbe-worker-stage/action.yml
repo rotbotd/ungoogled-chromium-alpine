@@ -2,13 +2,30 @@ name: RBE worker stage
 description: Run one worker for a resumable Chromium compilation stage
 
 inputs:
+  target:
+    description: Alpine target architecture
+    required: true
   stage-number:
     description: Sequential stage number
+    required: true
+  coordinator-job-name:
+    description: Resolved Actions job name for the coordinator
     required: true
 
 runs:
   using: composite
   steps:
+    - name: Verify native target architecture
+      shell: bash
+      env:
+        EXPECTED_TARGET: ${{ inputs.target }}
+      run: |
+        actual_target=$(uname -m)
+        if [[ "$actual_target" != "$EXPECTED_TARGET" ]]; then
+          echo "Expected $EXPECTED_TARGET runner, got $actual_target" >&2
+          exit 1
+        fi
+
     - name: Free runner disk space
       shell: bash
       run: |
@@ -44,9 +61,11 @@ runs:
     - name: Wait for coordinator
       shell: bash
       env:
-        DONE_ARTIFACT: rbe-finished-${{ github.run_id }}-${{ inputs.stage-number }}
+        COORDINATOR_JOB_NAME: ${{ inputs.coordinator-job-name }}
+        DONE_ARTIFACT: rbe-finished-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
         GH_TOKEN: ${{ github.token }}
       run: |
+        completed_polls=0
         for attempt in $(seq 1 350); do
           artifact_id=$(
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
@@ -60,6 +79,24 @@ runs:
             cat rbe-result/stage-status
             exit 0
           fi
+
+          coordinator_state=$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" \
+              --paginate \
+              --jq ".jobs[] | select(.name == \"${COORDINATOR_JOB_NAME}\" or (.name | endswith(\" / ${COORDINATOR_JOB_NAME}\"))) | [.status, (.conclusion // \"\")] | @tsv" \
+              | tail -n 1
+          )
+          if [[ "$coordinator_state" == completed$'\t'* ]]; then
+            completed_polls=$((completed_polls + 1))
+            if (( completed_polls >= 3 )); then
+              echo "Coordinator ended without publishing ${DONE_ARTIFACT}: ${coordinator_state}" >&2
+              exit 1
+            fi
+            echo "Coordinator completed; waiting for artifact visibility ($completed_polls/3)"
+          else
+            completed_polls=0
+          fi
+
           echo "Coordinator still running (poll $attempt/350)"
           sleep 60
         done

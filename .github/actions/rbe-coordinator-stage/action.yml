@@ -2,6 +2,9 @@ name: RBE coordinator stage
 description: Run one resumable Chromium compilation stage and checkpoint Buildbarn
 
 inputs:
+  target:
+    description: Alpine target architecture
+    required: true
   stage-number:
     description: Sequential stage number
     required: true
@@ -12,15 +15,33 @@ inputs:
   stage-timeout:
     description: Maximum time spent in the Siso build
     required: true
+  dry-run:
+    description: Create a synthetic checkpoint without compiling Chromium
+    required: false
+    default: "false"
 
 outputs:
   finished:
     description: Whether the APK packages have been produced
     value: ${{ steps.result.outputs.finished }}
+  state:
+    description: Stage result (success, checkpoint, or failure)
+    value: ${{ steps.result.outputs.state }}
 
 runs:
   using: composite
   steps:
+    - name: Verify native target architecture
+      shell: bash
+      env:
+        EXPECTED_TARGET: ${{ inputs.target }}
+      run: |
+        actual_target=$(uname -m)
+        if [[ "$actual_target" != "$EXPECTED_TARGET" ]]; then
+          echo "Expected $EXPECTED_TARGET runner, got $actual_target" >&2
+          exit 1
+        fi
+
     - name: Free runner disk space
       shell: bash
       run: |
@@ -94,17 +115,43 @@ runs:
       continue-on-error: true
       shell: bash
       env:
+        DRY_RUN: ${{ inputs.dry-run }}
         STAGE_TIMEOUT: ${{ inputs.stage-timeout }}
       run: |
-        sleep 60
+        startup_delay=60
+        if [[ "$DRY_RUN" == "true" ]]; then
+          startup_delay=10
+        fi
+        sleep "$startup_delay"
+
+        telemetry() {
+          while sleep 300; do
+            echo "=== Coordinator telemetry $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+            df -h /
+            free -h || true
+            docker stats --no-stream || true
+            docker compose -f rbe/coordinator.compose.yml ps || true
+          done
+        }
+        telemetry &
+        telemetry_pid=$!
+        trap 'kill "$telemetry_pid" 2>/dev/null || true' EXIT
+
+        dry_run=0
+        if [[ "$DRY_RUN" == "true" ]]; then
+          dry_run=1
+        fi
         docker run --rm \
           --entrypoint /usr/local/bin/ci-rbe \
           --network host \
           --ulimit nofile=4096:4096 \
+          --env CI_RBE_DRY_RUN="$dry_run" \
+          --env CI_RBE_STAGE_NUMBER="${{ inputs.stage-number }}" \
           --env CI_RBE_STAGE_TIMEOUT="$STAGE_TIMEOUT" \
+          --env RBE_TARGET="${{ inputs.target }}" \
           --env SISO_REAPI_ADDRESS=127.0.0.1:8980 \
           --env SISO_REAPI_INSTANCE=alpine \
-          --env SISO_REMOTE_JOBS=24 \
+          --env SISO_REMOTE_JOBS=28 \
           --mount "type=bind,source=$PWD/input,target=/mnt/input" \
           --mount "type=bind,source=$PWD/output,target=/mnt/output" \
           --mount "type=bind,source=$PWD/progress,target=/mnt/progress" \
@@ -158,7 +205,7 @@ runs:
       if: steps.result.outputs.state == 'checkpoint'
       uses: actions/upload-artifact@v4
       with:
-        name: rbe-progress-${{ github.run_id }}-${{ inputs.stage-number }}
+        name: rbe-progress-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
         path: |
           progress/package.tar.zst
           progress/package.tar.zst.sha256
@@ -172,11 +219,20 @@ runs:
       if: steps.result.outputs.finished == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: distributed-packages
+        name: distributed-packages-${{ inputs.target }}
         path: output/
         retention-days: 7
         compression-level: 0
         if-no-files-found: error
+
+    - name: Upload failed build log
+      if: steps.result.outputs.state == 'failure'
+      uses: actions/upload-artifact@v4
+      with:
+        name: rbe-failure-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
+        path: progress/siso-build.log
+        retention-days: 3
+        if-no-files-found: ignore
 
     - name: Delete superseded checkpoint
       if: steps.result.outputs.state != 'failure' && inputs.previous-checkpoint != ''
@@ -209,7 +265,7 @@ runs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: rbe-finished-${{ github.run_id }}-${{ inputs.stage-number }}
+        name: rbe-finished-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
         path: progress/stage-status
         retention-days: 1
         if-no-files-found: error

@@ -1,0 +1,304 @@
+name: Distributed Chromium target
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: Alpine target architecture
+        required: true
+        type: string
+      runner:
+        description: GitHub-hosted runner label
+        required: true
+        type: string
+      tunnel-hostname:
+        description: Cloudflare hostname for this target coordinator
+        required: true
+        type: string
+      worker-matrix:
+        description: JSON array of worker identifiers
+        required: true
+        type: string
+      stage-count:
+        description: Number of sequential checkpoint stages
+        required: true
+        type: number
+      stage-timeout:
+        description: Siso timeout for each stage
+        required: true
+        type: string
+      dry-run:
+        description: Use synthetic package-tree checkpoints
+        required: false
+        default: false
+        type: boolean
+      require-complete:
+        description: Require APK packages rather than a valid checkpoint
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      tunnel-token:
+        required: true
+      access-client-id:
+        required: true
+      access-client-secret:
+        required: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  coordinator_1:
+    name: ${{ inputs.target }}-coordinator-1
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+      state: ${{ steps.stage.outputs.state }}
+    env:
+      TUNNEL_TOKEN: ${{ secrets.tunnel-token }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: stage
+        uses: ./.github/actions/rbe-coordinator-stage
+        with:
+          target: ${{ inputs.target }}
+          stage-number: 1
+          stage-timeout: ${{ inputs.stage-timeout }}
+          dry-run: ${{ inputs.dry-run }}
+
+  workers_1:
+    name: ${{ inputs.target }}-worker-${{ matrix.worker }}
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: ${{ fromJSON(inputs.worker-matrix) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    env:
+      CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.access-client-id }}
+      CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.access-client-secret }}
+      RBE_TARGET: ${{ inputs.target }}
+      RBE_TUNNEL_HOSTNAME: ${{ inputs.tunnel-hostname }}
+      RBE_WORKER_ID: ${{ matrix.worker }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rbe-worker-stage
+        with:
+          target: ${{ inputs.target }}
+          stage-number: 1
+          coordinator-job-name: ${{ inputs.target }}-coordinator-1
+
+  coordinator_2:
+    name: ${{ inputs.target }}-coordinator-2
+    needs: [coordinator_1, workers_1]
+    if: >-
+      always() &&
+      inputs.stage-count >= 2 &&
+      needs.coordinator_1.result == 'success' &&
+      needs.workers_1.result == 'success' &&
+      needs.coordinator_1.outputs.finished != 'true'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+      state: ${{ steps.stage.outputs.state }}
+    env:
+      TUNNEL_TOKEN: ${{ secrets.tunnel-token }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: stage
+        uses: ./.github/actions/rbe-coordinator-stage
+        with:
+          target: ${{ inputs.target }}
+          stage-number: 2
+          previous-checkpoint: rbe-progress-${{ github.run_id }}-${{ inputs.target }}-1
+          stage-timeout: ${{ inputs.stage-timeout }}
+          dry-run: ${{ inputs.dry-run }}
+
+  workers_2:
+    name: ${{ inputs.target }}-worker-${{ matrix.worker }}-2
+    needs: [coordinator_1, workers_1]
+    if: >-
+      always() &&
+      inputs.stage-count >= 2 &&
+      needs.coordinator_1.result == 'success' &&
+      needs.workers_1.result == 'success' &&
+      needs.coordinator_1.outputs.finished != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: ${{ fromJSON(inputs.worker-matrix) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    env:
+      CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.access-client-id }}
+      CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.access-client-secret }}
+      RBE_TARGET: ${{ inputs.target }}
+      RBE_TUNNEL_HOSTNAME: ${{ inputs.tunnel-hostname }}
+      RBE_WORKER_ID: ${{ matrix.worker }}-2
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rbe-worker-stage
+        with:
+          target: ${{ inputs.target }}
+          stage-number: 2
+          coordinator-job-name: ${{ inputs.target }}-coordinator-2
+
+  coordinator_3:
+    name: ${{ inputs.target }}-coordinator-3
+    needs: [coordinator_2, workers_2]
+    if: >-
+      always() &&
+      inputs.stage-count >= 3 &&
+      needs.coordinator_2.result == 'success' &&
+      needs.workers_2.result == 'success' &&
+      needs.coordinator_2.outputs.finished != 'true'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+      state: ${{ steps.stage.outputs.state }}
+    env:
+      TUNNEL_TOKEN: ${{ secrets.tunnel-token }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: stage
+        uses: ./.github/actions/rbe-coordinator-stage
+        with:
+          target: ${{ inputs.target }}
+          stage-number: 3
+          previous-checkpoint: rbe-progress-${{ github.run_id }}-${{ inputs.target }}-2
+          stage-timeout: ${{ inputs.stage-timeout }}
+          dry-run: ${{ inputs.dry-run }}
+
+  workers_3:
+    name: ${{ inputs.target }}-worker-${{ matrix.worker }}-3
+    needs: [coordinator_2, workers_2]
+    if: >-
+      always() &&
+      inputs.stage-count >= 3 &&
+      needs.coordinator_2.result == 'success' &&
+      needs.workers_2.result == 'success' &&
+      needs.coordinator_2.outputs.finished != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: ${{ fromJSON(inputs.worker-matrix) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    env:
+      CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.access-client-id }}
+      CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.access-client-secret }}
+      RBE_TARGET: ${{ inputs.target }}
+      RBE_TUNNEL_HOSTNAME: ${{ inputs.tunnel-hostname }}
+      RBE_WORKER_ID: ${{ matrix.worker }}-3
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rbe-worker-stage
+        with:
+          target: ${{ inputs.target }}
+          stage-number: 3
+          coordinator-job-name: ${{ inputs.target }}-coordinator-3
+
+  coordinator_4:
+    name: ${{ inputs.target }}-coordinator-4
+    needs: [coordinator_3, workers_3]
+    if: >-
+      always() &&
+      inputs.stage-count >= 4 &&
+      needs.coordinator_3.result == 'success' &&
+      needs.workers_3.result == 'success' &&
+      needs.coordinator_3.outputs.finished != 'true'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+      state: ${{ steps.stage.outputs.state }}
+    env:
+      TUNNEL_TOKEN: ${{ secrets.tunnel-token }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: stage
+        uses: ./.github/actions/rbe-coordinator-stage
+        with:
+          target: ${{ inputs.target }}
+          stage-number: 4
+          previous-checkpoint: rbe-progress-${{ github.run_id }}-${{ inputs.target }}-3
+          stage-timeout: ${{ inputs.stage-timeout }}
+          dry-run: ${{ inputs.dry-run }}
+
+  workers_4:
+    name: ${{ inputs.target }}-worker-${{ matrix.worker }}-4
+    needs: [coordinator_3, workers_3]
+    if: >-
+      always() &&
+      inputs.stage-count >= 4 &&
+      needs.coordinator_3.result == 'success' &&
+      needs.workers_3.result == 'success' &&
+      needs.coordinator_3.outputs.finished != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: ${{ fromJSON(inputs.worker-matrix) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    env:
+      CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.access-client-id }}
+      CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.access-client-secret }}
+      RBE_TARGET: ${{ inputs.target }}
+      RBE_TUNNEL_HOSTNAME: ${{ inputs.tunnel-hostname }}
+      RBE_WORKER_ID: ${{ matrix.worker }}-4
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/rbe-worker-stage
+        with:
+          target: ${{ inputs.target }}
+          stage-number: 4
+          coordinator-job-name: ${{ inputs.target }}-coordinator-4
+
+  verify_result:
+    name: Verify ${{ inputs.target }} result
+    if: always()
+    needs:
+      - coordinator_1
+      - workers_1
+      - coordinator_2
+      - workers_2
+      - coordinator_3
+      - workers_3
+      - coordinator_4
+      - workers_4
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    env:
+      FINISHED: ${{ needs.coordinator_1.outputs.finished == 'true' || needs.coordinator_2.outputs.finished == 'true' || needs.coordinator_3.outputs.finished == 'true' || needs.coordinator_4.outputs.finished == 'true' }}
+      LAST_STATE: ${{ inputs.stage-count == 4 && needs.coordinator_4.outputs.state || inputs.stage-count == 3 && needs.coordinator_3.outputs.state || inputs.stage-count == 2 && needs.coordinator_2.outputs.state || needs.coordinator_1.outputs.state }}
+    steps:
+      - name: Require APK packages
+        if: inputs.require-complete && env.FINISHED != 'true'
+        run: |
+          echo "All compilation stages ended without producing packages" >&2
+          exit 1
+
+      - name: Require a resumable checkpoint
+        if: ${{ !inputs.require-complete && env.FINISHED != 'true' }}
+        run: |
+          if [[ "$LAST_STATE" != "checkpoint" ]]; then
+            echo "Expected final canary stage to checkpoint, got: ${LAST_STATE:-missing}" >&2
+            exit 1
+          fi
+
+      - name: Download APK packages
+        if: env.FINISHED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: distributed-packages-${{ inputs.target }}
+          path: packages
+
+      - name: Verify package checksums
+        if: env.FINISHED == 'true'
+        working-directory: packages
+        run: sha256sum -c SHA256SUMS

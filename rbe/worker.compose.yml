@@ -24,6 +24,7 @@ services:
     command: ["/config/worker.jsonnet"]
     environment:
       GITHUB_RUN_ID: ${GITHUB_RUN_ID}
+      RBE_TARGET: ${RBE_TARGET}
       RBE_WORKER_ID: ${RBE_WORKER_ID}
     volumes:
       - ./config:/config:ro
