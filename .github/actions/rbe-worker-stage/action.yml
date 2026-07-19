@@ -1,0 +1,83 @@
+name: RBE worker stage
+description: Run one worker for a resumable Chromium compilation stage
+
+inputs:
+  stage-number:
+    description: Sequential stage number
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Free runner disk space
+      shell: bash
+      run: |
+        sudo rm -rf \
+          /usr/share/dotnet \
+          /usr/local/lib/android \
+          /opt/ghc \
+          /opt/hostedtoolcache/CodeQL
+        docker system prune --all --force
+        df -h /
+
+    - name: Build Alpine remote runner image
+      shell: bash
+      run: |
+        docker build \
+          --file Containerfile \
+          --tag ungoogled-chromium-alpine-builder \
+          .
+        docker build \
+          --file rbe/ChromiumRunner.Containerfile \
+          --tag ungoogled-chromium-alpine-rbe \
+          .
+
+    - name: Start worker
+      shell: bash
+      working-directory: rbe
+      run: |
+        mkdir -p volumes/bb volumes/worker/build volumes/worker/cache
+        chmod 0777 volumes/bb volumes/worker volumes/worker/build
+        chmod 0700 volumes/worker/cache
+        docker compose -f worker.compose.yml up --detach
+
+    - name: Wait for coordinator
+      shell: bash
+      env:
+        DONE_ARTIFACT: rbe-finished-${{ github.run_id }}-${{ inputs.stage-number }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        for attempt in $(seq 1 350); do
+          artifact_id=$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+              --jq ".artifacts[] | select(.name == \"${DONE_ARTIFACT}\") | .id" \
+              | head -n 1
+          )
+          if [[ -n "$artifact_id" ]]; then
+            gh run download "$GITHUB_RUN_ID" \
+              --name "$DONE_ARTIFACT" \
+              --dir rbe-result
+            cat rbe-result/stage-status
+            exit 0
+          fi
+          echo "Coordinator still running (poll $attempt/350)"
+          sleep 60
+        done
+        echo "Coordinator did not publish its completion signal" >&2
+        exit 1
+
+    - name: Show worker status
+      if: always()
+      shell: bash
+      working-directory: rbe
+      run: |
+        df -h /
+        du -sh volumes/worker/* || true
+        docker compose -f worker.compose.yml ps
+        docker compose -f worker.compose.yml logs --tail 500
+
+    - name: Stop worker
+      if: always()
+      shell: bash
+      working-directory: rbe
+      run: docker compose -f worker.compose.yml down || true

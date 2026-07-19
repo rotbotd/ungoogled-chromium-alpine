@@ -1,0 +1,230 @@
+name: RBE coordinator stage
+description: Run one resumable Chromium compilation stage and checkpoint Buildbarn
+
+inputs:
+  stage-number:
+    description: Sequential stage number
+    required: true
+  previous-checkpoint:
+    description: Checkpoint artifact from the previous stage
+    required: false
+    default: ""
+  stage-timeout:
+    description: Maximum time spent in the Siso build
+    required: true
+
+outputs:
+  finished:
+    description: Whether the APK packages have been produced
+    value: ${{ steps.result.outputs.finished }}
+
+runs:
+  using: composite
+  steps:
+    - name: Free runner disk space
+      shell: bash
+      run: |
+        sudo rm -rf \
+          /usr/share/dotnet \
+          /usr/local/lib/android \
+          /opt/ghc \
+          /opt/hostedtoolcache/CodeQL
+        docker system prune --all --force
+        df -h /
+
+    - name: Download previous checkpoint
+      if: inputs.previous-checkpoint != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.previous-checkpoint }}
+        path: input
+
+    - name: Create stage directories
+      shell: bash
+      run: mkdir -p input output progress
+
+    - name: Restore Buildbarn checkpoint
+      if: inputs.previous-checkpoint != ''
+      shell: bash
+      run: |
+        (
+          cd input
+          sha256sum -c rbe.tar.zst.sha256
+        )
+        sudo tar --sparse -xf input/rbe.tar.zst -C rbe
+        sudo rm -f input/rbe.tar.zst input/rbe.tar.zst.sha256
+
+    - name: Build Alpine coordinator image
+      shell: bash
+      run: |
+        docker build \
+          --file Containerfile \
+          --tag ungoogled-chromium-alpine-builder \
+          .
+
+    - name: Start Buildbarn coordinator
+      shell: bash
+      working-directory: rbe
+      run: |
+        mkdir -p \
+          volumes/storage-ac/persistent_state \
+          volumes/storage-cas/persistent_state \
+          volumes/storage-fsac/persistent_state
+        chmod 0700 \
+          volumes/storage-ac \
+          volumes/storage-ac/persistent_state \
+          volumes/storage-cas \
+          volumes/storage-cas/persistent_state \
+          volumes/storage-fsac \
+          volumes/storage-fsac/persistent_state
+        docker compose -f coordinator.compose.yml up --detach
+
+    - name: Start named Cloudflare tunnel
+      shell: bash
+      run: |
+        docker run --detach \
+          --name rbe-cloudflared \
+          --network host \
+          --env TUNNEL_TOKEN \
+          cloudflare/cloudflared:latest \
+          tunnel --no-autoupdate run
+
+    - name: Build packages with remote workers
+      id: build
+      continue-on-error: true
+      shell: bash
+      env:
+        STAGE_TIMEOUT: ${{ inputs.stage-timeout }}
+      run: |
+        sleep 60
+        docker run --rm \
+          --entrypoint /usr/local/bin/ci-rbe \
+          --network host \
+          --ulimit nofile=4096:4096 \
+          --env CI_RBE_STAGE_TIMEOUT="$STAGE_TIMEOUT" \
+          --env SISO_REAPI_ADDRESS=127.0.0.1:8980 \
+          --env SISO_REAPI_INSTANCE=alpine \
+          --env SISO_REMOTE_JOBS=24 \
+          --mount "type=bind,source=$PWD/input,target=/mnt/input" \
+          --mount "type=bind,source=$PWD/output,target=/mnt/output" \
+          --mount "type=bind,source=$PWD/progress,target=/mnt/progress" \
+          ungoogled-chromium-alpine-builder
+
+    - name: Stop coordinator services
+      if: always()
+      shell: bash
+      run: |
+        docker logs rbe-cloudflared > rbe-cloudflared.log 2>&1 || true
+        docker rm --force rbe-cloudflared || true
+        docker compose -f rbe/coordinator.compose.yml stop --timeout 60 || true
+
+    - name: Determine stage result
+      id: result
+      if: always()
+      shell: bash
+      env:
+        BUILD_OUTCOME: ${{ steps.build.outcome }}
+      run: |
+        state=failure
+        finished=false
+        if [[ "$BUILD_OUTCOME" == "success" && -f progress/finished ]]; then
+          state=success
+          finished=true
+        elif [[ "$BUILD_OUTCOME" == "success" \
+          && -f progress/package.tar.zst \
+          && -f progress/package.tar.zst.sha256 ]]; then
+          state=checkpoint
+        fi
+        echo "state=$state" >> "$GITHUB_OUTPUT"
+        echo "finished=$finished" >> "$GITHUB_OUTPUT"
+
+    - name: Checkpoint Buildbarn storage
+      if: steps.result.outputs.state == 'checkpoint'
+      shell: bash
+      run: |
+        sudo tar --sparse -I 'zstd -T0 -3' \
+          -cf progress/rbe.tar.zst \
+          -C rbe \
+          volumes/storage-ac \
+          volumes/storage-cas \
+          volumes/storage-fsac
+        sudo chown "$(id -u):$(id -g)" progress/rbe.tar.zst
+        (
+          cd progress
+          sha256sum rbe.tar.zst > rbe.tar.zst.sha256
+        )
+
+    - name: Upload compilation checkpoint
+      if: steps.result.outputs.state == 'checkpoint'
+      uses: actions/upload-artifact@v4
+      with:
+        name: rbe-progress-${{ github.run_id }}-${{ inputs.stage-number }}
+        path: |
+          progress/package.tar.zst
+          progress/package.tar.zst.sha256
+          progress/rbe.tar.zst
+          progress/rbe.tar.zst.sha256
+        retention-days: 1
+        compression-level: 0
+        if-no-files-found: error
+
+    - name: Upload APK packages
+      if: steps.result.outputs.finished == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: distributed-packages
+        path: output/
+        retention-days: 7
+        compression-level: 0
+        if-no-files-found: error
+
+    - name: Delete superseded checkpoint
+      if: steps.result.outputs.state != 'failure' && inputs.previous-checkpoint != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PREVIOUS_CHECKPOINT: ${{ inputs.previous-checkpoint }}
+      run: |
+        artifact_id=$(
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+            --paginate \
+            --jq ".artifacts[] | select(.name == \"$PREVIOUS_CHECKPOINT\") | .id" \
+            | head -n 1
+        )
+        if [[ -n "$artifact_id" ]]; then
+          gh api --method DELETE \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id"
+        fi
+
+    - name: Record stage status
+      if: always()
+      shell: bash
+      env:
+        STAGE_STATE: ${{ steps.result.outputs.state }}
+      run: |
+        mkdir -p progress
+        printf '%s\n' "${STAGE_STATE:-failure}" > progress/stage-status
+
+    - name: Publish completion signal
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: rbe-finished-${{ github.run_id }}-${{ inputs.stage-number }}
+        path: progress/stage-status
+        retention-days: 1
+        if-no-files-found: error
+
+    - name: Show coordinator status
+      if: always()
+      shell: bash
+      run: |
+        df -h /
+        sudo du -sh rbe/volumes/* || true
+        cat rbe-cloudflared.log || true
+        docker compose -f rbe/coordinator.compose.yml ps
+        docker compose -f rbe/coordinator.compose.yml logs --tail 500
+
+    - name: Require a valid stage result
+      if: always() && steps.result.outputs.state == 'failure'
+      shell: bash
+      run: exit 1

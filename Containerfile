@@ -5,6 +5,7 @@ RUN apk add --no-cache \
 		coreutils \
 		shellcheck \
 		sudo \
+		tar \
 		zstd \
 	&& adduser -D -h /home/builder builder \
 	&& addgroup builder abuild \
