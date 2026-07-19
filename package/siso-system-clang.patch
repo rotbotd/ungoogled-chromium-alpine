@@ -1,6 +1,6 @@
 --- a/build/config/siso/clang_unix.star
 +++ b/build/config/siso/clang_unix.star
-@@ -84,7 +84,78 @@ def __rules(ctx):
+@@ -84,7 +84,90 @@ def __rules(ctx):
      use_thin_lto = gn_logs_data.get("use_thin_lto") == "true"
      remote_link_timeout = "80m" if use_thin_lto else "10m"
  
@@ -13,7 +13,11 @@
 +            "handler": "clang_compile",
 +            "action": "(.*_)?cxx",
 +            "command_prefix": "clang++ ",
-+            "inputs": ["buildtools/third_party/libc++/__config_site"],
++            "inputs": [
++                "buildtools/third_party/libc++/__assertion_handler",
++                "buildtools/third_party/libc++/__config_site",
++                "third_party/libc++/src/include:headers",
++            ],
 +            "exclude_input_patterns": ["*.stamp"],
 +            "remote": True,
 +            "use_system_input": True,
@@ -25,7 +29,11 @@
 +            "handler": "clang_compile",
 +            "action": "(.*_)?cxx_module",
 +            "command_prefix": "clang++ ",
-+            "inputs": ["buildtools/third_party/libc++/__config_site"],
++            "inputs": [
++                "buildtools/third_party/libc++/__assertion_handler",
++                "buildtools/third_party/libc++/__config_site",
++                "third_party/libc++/src/include:headers",
++            ],
 +            "exclude_input_patterns": ["*.stamp"],
 +            "remote": True,
 +            "use_system_input": True,
@@ -48,7 +56,11 @@
 +            "handler": "clang_compile",
 +            "action": "(.*_)?objcxx",
 +            "command_prefix": "clang++ ",
-+            "inputs": ["buildtools/third_party/libc++/__config_site"],
++            "inputs": [
++                "buildtools/third_party/libc++/__assertion_handler",
++                "buildtools/third_party/libc++/__config_site",
++                "third_party/libc++/src/include:headers",
++            ],
 +            "exclude_input_patterns": ["*.stamp"],
 +            "remote": True,
 +            "use_system_input": True,
