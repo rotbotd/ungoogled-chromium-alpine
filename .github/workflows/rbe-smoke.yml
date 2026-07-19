@@ -56,16 +56,32 @@ jobs:
             cloudflare/cloudflared:latest \
             tunnel --no-autoupdate run
 
+      - name: Install Bazelisk
+        env:
+          BAZELISK_VERSION: v1.29.0
+        run: |
+          curl --fail --location --silent --show-error \
+            --output bazelisk-linux-amd64 \
+            "https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-amd64"
+          curl --fail --location --silent --show-error \
+            --output bazelisk-linux-amd64.sha256 \
+            "https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-amd64.sha256"
+          printf '%s  %s\n' \
+            "$(cat bazelisk-linux-amd64.sha256)" \
+            bazelisk-linux-amd64 \
+            | sha256sum --check -
+          sudo install -m 0755 bazelisk-linux-amd64 /usr/local/bin/bazel
+
       - name: Run parallel remote actions
         id: smoke
         continue-on-error: true
+        env:
+          USE_BAZEL_VERSION: 8.3.1
         run: |
           sleep 30
-          docker run --rm \
-            --network host \
-            --volume "$PWD/rbe/smoke:/workspace" \
-            --workdir /workspace \
-            bazelbuild/bazel:8.3.1 \
+          cd rbe/smoke
+          bazel \
+            --output_user_root="${RUNNER_TEMP}/bazel" \
             build \
             --remote_executor=grpc://127.0.0.1:8980 \
             --remote_instance_name=alpine \
@@ -73,7 +89,7 @@ jobs:
             --remote_default_exec_properties=container-image=docker://ungoogled-chromium-alpine-rbe \
             --remote_download_outputs=all \
             --remote_local_fallback=false \
-            --remote_timeout=600 \
+            --remote_timeout=120 \
             --spawn_strategy=remote \
             --jobs=16 \
             //:all

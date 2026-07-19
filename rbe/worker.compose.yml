@@ -8,9 +8,10 @@ services:
       - ${RBE_TUNNEL_HOSTNAME}
       - --url
       - 0.0.0.0:18980
-    environment:
-      TUNNEL_SERVICE_TOKEN_ID: ${CLOUDFLARE_ACCESS_CLIENT_ID}
-      TUNNEL_SERVICE_TOKEN_SECRET: ${CLOUDFLARE_ACCESS_CLIENT_SECRET}
+      - --service-token-id
+      - ${CLOUDFLARE_ACCESS_CLIENT_ID}
+      - --service-token-secret
+      - ${CLOUDFLARE_ACCESS_CLIENT_SECRET}
     restart: unless-stopped
 
   runner-installer:
