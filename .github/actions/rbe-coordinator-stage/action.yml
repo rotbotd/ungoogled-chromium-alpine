@@ -15,6 +15,9 @@ inputs:
   stage-timeout:
     description: Maximum time spent in the Siso build
     required: true
+  expected-workers:
+    description: Number of Buildbarn workers required before compiling
+    required: true
   dry-run:
     description: Create a synthetic checkpoint without compiling Chromium
     required: false
@@ -110,6 +113,80 @@ runs:
           cloudflare/cloudflared:latest \
           tunnel --no-autoupdate run
 
+        for attempt in $(seq 1 60); do
+          if docker logs rbe-cloudflared 2>&1 \
+            | grep -q "Registered tunnel connection"; then
+            date -u +%Y-%m-%dT%H:%M:%SZ > progress/coordinator-ready
+            echo "Named tunnel registered with Cloudflare"
+            exit 0
+          fi
+          if [[ "$(docker inspect -f '{{.State.Running}}' rbe-cloudflared)" != "true" ]]; then
+            docker logs rbe-cloudflared >&2
+            echo "Named tunnel stopped before registering with Cloudflare" >&2
+            exit 1
+          fi
+          echo "Waiting for named tunnel registration ($attempt/60)"
+          sleep 2
+        done
+        docker logs rbe-cloudflared >&2
+        echo "Named tunnel did not register with Cloudflare" >&2
+        exit 1
+
+    - name: Publish coordinator readiness
+      uses: actions/upload-artifact@v7
+      with:
+        name: rbe-ready-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
+        path: progress/coordinator-ready
+        retention-days: 1
+        if-no-files-found: error
+
+    - name: Wait for remote workers
+      shell: bash
+      env:
+        EXPECTED_WORKERS: ${{ inputs.expected-workers }}
+      run: |
+        stable_polls=0
+        for attempt in $(seq 1 120); do
+          metrics=$(curl --fail --silent --show-error \
+            --max-time 5 http://127.0.0.1:7981/metrics || true)
+          created=$(
+            awk '
+              /^buildbarn_builder_in_memory_build_queue_workers_created_total\{/ {
+                total += $2
+              }
+              END { print total + 0 }
+            ' <<< "$metrics"
+          )
+          removed=$(
+            awk '
+              /^buildbarn_builder_in_memory_build_queue_workers_removed_total\{/ {
+                total += $2
+              }
+              END { print total + 0 }
+            ' <<< "$metrics"
+          )
+          connected=$((created - removed))
+
+          if (( connected >= EXPECTED_WORKERS )); then
+            stable_polls=$((stable_polls + 1))
+            echo "Buildbarn reports $connected/$EXPECTED_WORKERS workers ($stable_polls/3 stable polls)"
+            if (( stable_polls >= 3 )); then
+              exit 0
+            fi
+          else
+            stable_polls=0
+            echo "Waiting for Buildbarn workers: $connected/$EXPECTED_WORKERS ($attempt/120)"
+          fi
+          sleep 10
+        done
+
+        curl --fail --silent --show-error http://127.0.0.1:7981/metrics \
+          | grep -E 'buildbarn_builder_in_memory_build_queue_workers_(created|removed)_total' \
+          || true
+        docker compose -f rbe/coordinator.compose.yml logs scheduler router || true
+        echo "Expected $EXPECTED_WORKERS Buildbarn workers did not connect" >&2
+        exit 1
+
     - name: Build packages with remote workers
       id: build
       continue-on-error: true
@@ -118,12 +195,6 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         STAGE_TIMEOUT: ${{ inputs.stage-timeout }}
       run: |
-        startup_delay=60
-        if [[ "$DRY_RUN" == "true" ]]; then
-          startup_delay=10
-        fi
-        sleep "$startup_delay"
-
         telemetry() {
           while sleep 300; do
             echo "=== Coordinator telemetry $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="

@@ -49,6 +49,47 @@ runs:
           --tag ungoogled-chromium-alpine-rbe \
           .
 
+    - name: Wait for coordinator tunnel
+      shell: bash
+      env:
+        COORDINATOR_JOB_NAME: ${{ inputs.coordinator-job-name }}
+        READY_ARTIFACT: rbe-ready-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        completed_polls=0
+        for attempt in $(seq 1 120); do
+          artifact_id=$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+              --jq ".artifacts[] | select(.name == \"${READY_ARTIFACT}\") | .id" \
+              | head -n 1
+          )
+          if [[ -n "$artifact_id" ]]; then
+            echo "Coordinator tunnel is registered with Cloudflare"
+            exit 0
+          fi
+
+          coordinator_state=$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" \
+              --paginate \
+              --jq ".jobs[] | select(.name == \"${COORDINATOR_JOB_NAME}\" or (.name | endswith(\" / ${COORDINATOR_JOB_NAME}\"))) | [.status, (.conclusion // \"\")] | @tsv" \
+              | tail -n 1
+          )
+          if [[ "$coordinator_state" == completed$'\t'* ]]; then
+            completed_polls=$((completed_polls + 1))
+            if (( completed_polls >= 3 )); then
+              echo "Coordinator ended without publishing ${READY_ARTIFACT}: ${coordinator_state}" >&2
+              exit 1
+            fi
+          else
+            completed_polls=0
+          fi
+
+          echo "Waiting for coordinator tunnel ($attempt/120)"
+          sleep 10
+        done
+        echo "Coordinator did not publish its tunnel readiness signal" >&2
+        exit 1
+
     - name: Start worker
       shell: bash
       working-directory: rbe

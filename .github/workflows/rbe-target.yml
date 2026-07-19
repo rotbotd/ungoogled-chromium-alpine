@@ -19,6 +19,10 @@ on:
         description: JSON array of worker identifiers
         required: true
         type: string
+      worker-count:
+        description: Number of workers in the matrix
+        required: true
+        type: number
       stage-count:
         description: Number of sequential checkpoint stages
         required: true
@@ -66,6 +70,7 @@ jobs:
         with:
           target: ${{ inputs.target }}
           stage-number: 1
+          expected-workers: ${{ inputs.worker-count }}
           stage-timeout: ${{ inputs.stage-timeout }}
           dry-run: ${{ inputs.dry-run }}
 
@@ -115,6 +120,7 @@ jobs:
           target: ${{ inputs.target }}
           stage-number: 2
           previous-checkpoint: rbe-progress-${{ github.run_id }}-${{ inputs.target }}-1
+          expected-workers: ${{ inputs.worker-count }}
           stage-timeout: ${{ inputs.stage-timeout }}
           dry-run: ${{ inputs.dry-run }}
 
@@ -171,6 +177,7 @@ jobs:
           target: ${{ inputs.target }}
           stage-number: 3
           previous-checkpoint: rbe-progress-${{ github.run_id }}-${{ inputs.target }}-2
+          expected-workers: ${{ inputs.worker-count }}
           stage-timeout: ${{ inputs.stage-timeout }}
           dry-run: ${{ inputs.dry-run }}
 
@@ -227,6 +234,7 @@ jobs:
           target: ${{ inputs.target }}
           stage-number: 4
           previous-checkpoint: rbe-progress-${{ github.run_id }}-${{ inputs.target }}-3
+          expected-workers: ${{ inputs.worker-count }}
           stage-timeout: ${{ inputs.stage-timeout }}
           dry-run: ${{ inputs.dry-run }}
 

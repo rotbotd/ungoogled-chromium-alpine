@@ -85,6 +85,7 @@ jobs:
       runner: ubuntu-24.04
       tunnel-hostname: ${{ vars.RBE_TUNNEL_HOSTNAME_X86_64 }}
       worker-matrix: ${{ inputs.mode == 'infrastructure-dry-run' && '["1","2"]' || '["1","2","3","4","5","6","7","8"]' }}
+      worker-count: ${{ inputs.mode == 'infrastructure-dry-run' && 2 || 8 }}
       stage-count: ${{ inputs.mode == 'full' && 4 || 2 }}
       stage-timeout: ${{ inputs.mode == 'full' && '120m' || inputs.mode == 'checkpoint-canary' && '15m' || '1m' }}
       dry-run: ${{ inputs.mode == 'infrastructure-dry-run' }}
@@ -104,6 +105,7 @@ jobs:
       runner: ubuntu-24.04-arm
       tunnel-hostname: ${{ vars.RBE_TUNNEL_HOSTNAME_AARCH64 }}
       worker-matrix: '["1","2","3","4","5","6","7","8"]'
+      worker-count: 8
       stage-count: 4
       stage-timeout: 120m
       require-complete: true

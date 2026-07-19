@@ -11,6 +11,8 @@ services:
   scheduler:
     image: ghcr.io/buildbarn/bb-scheduler:20260527T162223Z-c48dcda
     command: ["/config/scheduler.jsonnet"]
+    ports:
+      - "127.0.0.1:7981:80"
     volumes:
       - ./config:/config:ro
 
