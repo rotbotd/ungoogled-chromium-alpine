@@ -1,9 +1,6 @@
 name: Distributed Chromium build
 
 on:
-  push:
-    branches:
-      - experiment/cloudflare-rbe
   workflow_dispatch:
 
 permissions:
