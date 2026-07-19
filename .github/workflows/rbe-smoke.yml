@@ -105,6 +105,8 @@ jobs:
 
           cd ../siso-smoke
           ./generate.sh
+          sudo install -d /usr/lib/llvm22/bin
+          sudo ln -sf "$(command -v clang++)" /usr/lib/llvm22/bin/clang++
           RBE_service_no_security=true \
             siso ninja \
               -C . \
@@ -113,6 +115,7 @@ jobs:
               -reapi_instance alpine \
               -remote_jobs 16 \
               -output_local_strategy full \
+              -strict_remote \
               all
 
       - name: Record result

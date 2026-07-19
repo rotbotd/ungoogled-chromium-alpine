@@ -17,6 +17,7 @@ def init(ctx):
             "command_prefix": "/usr/lib/llvm22/bin/clang++ ",
             "remote": True,
             "timeout": "2m",
+            "use_system_input": True,
         }],
     }
     return module(
