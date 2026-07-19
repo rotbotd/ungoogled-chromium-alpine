@@ -21,8 +21,12 @@ RUN apk add --no-cache \
 COPY --chown=builder:abuild package/ /home/builder/package/
 COPY scripts/container-entrypoint.sh /usr/local/bin/container-entrypoint
 COPY scripts/ci-stage.sh /usr/local/bin/ci-stage
+COPY scripts/ci-rbe.sh /usr/local/bin/ci-rbe
 
-RUN chmod 0755 /usr/local/bin/container-entrypoint /usr/local/bin/ci-stage
+RUN chmod 0755 \
+	/usr/local/bin/container-entrypoint \
+	/usr/local/bin/ci-rbe \
+	/usr/local/bin/ci-stage
 
 WORKDIR /home/builder/package
 ENTRYPOINT ["/usr/local/bin/container-entrypoint"]

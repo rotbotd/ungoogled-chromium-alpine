@@ -1,0 +1,79 @@
+--- a/build/config/siso/clang_unix.star
++++ b/build/config/siso/clang_unix.star
+@@ -84,7 +84,75 @@ def __rules(ctx):
+     use_thin_lto = gn_logs_data.get("use_thin_lto") == "true"
+     remote_link_timeout = "80m" if use_thin_lto else "10m"
+ 
+-    rules = []
++    # Alpine uses its packaged Clang instead of Chromium's bundled toolchain.
++    # Siso normalizes absolute executables to their basename for rule matching.
++    rules = [
++        {
++            "name": "system-clang/cxx",
++            "handler": "clang_compile",
++            "action": "(.*_)?cxx",
++            "command_prefix": "clang++ ",
++            "exclude_input_patterns": ["*.stamp"],
++            "remote": True,
++            "use_system_input": True,
++            "input_root_absolute_path": input_root_absolute_path,
++            "timeout": "2m",
++        },
++        {
++            "name": "system-clang/cxx_module",
++            "handler": "clang_compile",
++            "action": "(.*_)?cxx_module",
++            "command_prefix": "clang++ ",
++            "exclude_input_patterns": ["*.stamp"],
++            "remote": True,
++            "use_system_input": True,
++            "input_root_absolute_path": input_root_absolute_path,
++            "timeout": "2m",
++        },
++        {
++            "name": "system-clang/cc",
++            "handler": "clang_compile",
++            "action": "(.*_)?cc",
++            "command_prefix": "clang ",
++            "exclude_input_patterns": ["*.stamp"],
++            "remote": True,
++            "use_system_input": True,
++            "input_root_absolute_path": input_root_absolute_path,
++            "timeout": "2m",
++        },
++        {
++            "name": "system-clang/objcxx",
++            "handler": "clang_compile",
++            "action": "(.*_)?objcxx",
++            "command_prefix": "clang++ ",
++            "exclude_input_patterns": ["*.stamp"],
++            "remote": True,
++            "use_system_input": True,
++            "input_root_absolute_path": input_root_absolute_path_for_objc,
++            "timeout": "2m",
++        },
++        {
++            "name": "system-clang/objc",
++            "handler": "clang_compile",
++            "action": "(.*_)?objc",
++            "command_prefix": "clang ",
++            "exclude_input_patterns": ["*.stamp"],
++            "remote": True,
++            "use_system_input": True,
++            "input_root_absolute_path": input_root_absolute_path_for_objc,
++            "timeout": "2m",
++        },
++        {
++            "name": "system-clang/asm",
++            "handler": "clang_compile",
++            "action": "(.*_)?asm",
++            "command_prefix": "clang ",
++            "remote": True,
++            "use_system_input": True,
++            "input_root_absolute_path": input_root_absolute_path,
++            "timeout": "2m",
++        },
++    ]
+     if win_sdk.enabled(ctx):
+         rules.extend([
+             {

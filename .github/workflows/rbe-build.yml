@@ -1,4 +1,4 @@
-name: Cloudflare RBE smoke test
+name: Distributed Chromium build
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ concurrency:
 jobs:
   coordinator:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
     env:
       DONE_ARTIFACT: rbe-finished-${{ github.run_id }}
     steps:
@@ -29,6 +29,13 @@ jobs:
             /opt/hostedtoolcache/CodeQL
           docker system prune --all --force
           df -h /
+
+      - name: Build Alpine coordinator image
+        run: |
+          docker build \
+            --file Containerfile \
+            --tag ungoogled-chromium-alpine-builder \
+            .
 
       - name: Start Buildbarn coordinator
         working-directory: rbe
@@ -57,75 +64,39 @@ jobs:
             cloudflare/cloudflared:latest \
             tunnel --no-autoupdate run
 
-      - name: Install Bazelisk
-        env:
-          BAZELISK_VERSION: v1.29.0
-        run: |
-          curl --fail --location --silent --show-error \
-            --output bazelisk-linux-amd64 \
-            "https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-amd64"
-          curl --fail --location --silent --show-error \
-            --output bazelisk-linux-amd64.sha256 \
-            "https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-amd64.sha256"
-          printf '%s  %s\n' \
-            "$(cat bazelisk-linux-amd64.sha256)" \
-            bazelisk-linux-amd64 \
-            | sha256sum --check -
-          sudo install -m 0755 bazelisk-linux-amd64 /usr/local/bin/bazel
-
-      - name: Install Chromium Siso
-        env:
-          GOTOOLCHAIN: auto
-        run: |
-          GOBIN="${RUNNER_TEMP}/bin" \
-            go install go.chromium.org/build/siso@v1.5.16
-          sudo install -m 0755 "${RUNNER_TEMP}/bin/siso" /usr/local/bin/siso
-          siso version
-
-      - name: Run parallel remote actions
-        id: smoke
+      - name: Build packages with remote workers
+        id: build
         continue-on-error: true
-        env:
-          USE_BAZEL_VERSION: 8.3.1
         run: |
-          sleep 30
-          cd rbe/smoke
-          bazel \
-            --output_user_root="${RUNNER_TEMP}/bazel" \
-            build \
-            --remote_executor=grpc://127.0.0.1:8980 \
-            --remote_instance_name=alpine \
-            --remote_default_exec_properties=OSFamily=linux \
-            --remote_default_exec_properties=container-image=docker://ungoogled-chromium-alpine-rbe \
-            --remote_download_outputs=all \
-            --remote_local_fallback=false \
-            --remote_timeout=120 \
-            --spawn_strategy=remote \
-            --jobs=16 \
-            //:all
+          mkdir -p output
+          sleep 60
+          docker run --rm \
+            --entrypoint /usr/local/bin/ci-rbe \
+            --network host \
+            --ulimit nofile=4096:4096 \
+            --env SISO_REAPI_ADDRESS=127.0.0.1:8980 \
+            --env SISO_REAPI_INSTANCE=alpine \
+            --env SISO_REMOTE_JOBS=16 \
+            --mount "type=bind,source=$PWD/output,target=/mnt/output" \
+            ungoogled-chromium-alpine-builder
 
-          cd ../siso-smoke
-          ./generate.sh
-          sudo install -d /usr/lib/llvm22/bin
-          sudo ln -sf "$(command -v clang++)" /usr/lib/llvm22/bin/clang++
-          RBE_service_no_security=true \
-            siso ninja \
-              -C . \
-              -config_repo_dir config \
-              -reapi_address 127.0.0.1:8980 \
-              -reapi_instance alpine \
-              -remote_jobs 16 \
-              -output_local_strategy full \
-              -strict_remote \
-              all
+      - name: Upload APK packages
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: distributed-packages
+          path: output/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
 
       - name: Record result
         if: always()
         env:
-          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
           mkdir -p rbe-result
-          printf '%s\n' "$SMOKE_OUTCOME" > rbe-result/status
+          printf '%s\n' "$BUILD_OUTCOME" > rbe-result/status
 
       - name: Publish completion signal
         if: always()
@@ -136,16 +107,18 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      - name: Show coordinator logs
+      - name: Show coordinator status
         if: always()
         working-directory: rbe
         run: |
+          df -h /
+          du -sh volumes/* || true
           docker logs rbe-cloudflared || true
           docker compose -f coordinator.compose.yml ps
-          docker compose -f coordinator.compose.yml logs
+          docker compose -f coordinator.compose.yml logs --tail 500
 
-      - name: Require successful remote execution
-        if: always() && steps.smoke.outcome != 'success'
+      - name: Require a successful package build
+        if: always() && steps.build.outcome != 'success'
         run: exit 1
 
   workers:
@@ -155,7 +128,7 @@ jobs:
       matrix:
         worker: [1, 2, 3, 4]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
     env:
       CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
       CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
@@ -165,11 +138,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build remote runner image
-        working-directory: rbe
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune --all --force
+          df -h /
+
+      - name: Build Alpine remote runner image
         run: |
           docker build \
-            --file SmokeRunner.Containerfile \
+            --file Containerfile \
+            --tag ungoogled-chromium-alpine-builder \
+            .
+          docker build \
+            --file rbe/ChromiumRunner.Containerfile \
             --tag ungoogled-chromium-alpine-rbe \
             .
 
@@ -185,7 +171,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for attempt in $(seq 1 25); do
+          for attempt in $(seq 1 350); do
             artifact_id=$(
               gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
                 --jq ".artifacts[] | select(.name == \"${DONE_ARTIFACT}\") | .id" \
@@ -197,15 +183,17 @@ jobs:
                 --dir rbe-result
               exit 0
             fi
-            echo "Coordinator still running (poll $attempt/25)"
+            echo "Coordinator still running (poll $attempt/350)"
             sleep 60
           done
           echo "Coordinator did not publish its completion signal" >&2
           exit 1
 
-      - name: Show worker logs
+      - name: Show worker status
         if: always()
         working-directory: rbe
         run: |
+          df -h /
+          du -sh volumes/worker/* || true
           docker compose -f worker.compose.yml ps
-          docker compose -f worker.compose.yml logs
+          docker compose -f worker.compose.yml logs --tail 500
