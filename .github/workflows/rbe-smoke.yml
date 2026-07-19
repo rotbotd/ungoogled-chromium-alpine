@@ -1,0 +1,170 @@
+name: Cloudflare RBE smoke test
+
+on:
+  push:
+    branches:
+      - experiment/cloudflare-rbe
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  coordinator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DONE_ARTIFACT: rbe-finished-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune --all --force
+          df -h /
+
+      - name: Start Buildbarn coordinator
+        working-directory: rbe
+        run: |
+          mkdir -p \
+            volumes/storage-ac/persistent_state \
+            volumes/storage-cas/persistent_state \
+            volumes/storage-fsac/persistent_state
+          chmod 0700 \
+            volumes/storage-ac \
+            volumes/storage-ac/persistent_state \
+            volumes/storage-cas \
+            volumes/storage-cas/persistent_state \
+            volumes/storage-fsac \
+            volumes/storage-fsac/persistent_state
+          docker compose -f coordinator.compose.yml up --detach
+
+      - name: Start named Cloudflare tunnel
+        env:
+          TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: |
+          docker run --detach \
+            --name rbe-cloudflared \
+            --network host \
+            --env TUNNEL_TOKEN \
+            cloudflare/cloudflared:latest \
+            tunnel --no-autoupdate run
+
+      - name: Run parallel remote actions
+        id: smoke
+        continue-on-error: true
+        run: |
+          sleep 30
+          docker run --rm \
+            --network host \
+            --volume "$PWD/rbe/smoke:/workspace" \
+            --workdir /workspace \
+            bazelbuild/bazel:8.3.1 \
+            build \
+            --remote_executor=grpc://127.0.0.1:8980 \
+            --remote_instance_name=alpine \
+            --remote_default_exec_properties=OSFamily=linux \
+            --remote_default_exec_properties=container-image=docker://ungoogled-chromium-alpine-rbe \
+            --remote_download_outputs=all \
+            --remote_local_fallback=false \
+            --remote_timeout=600 \
+            --spawn_strategy=remote \
+            --jobs=16 \
+            //:all
+
+      - name: Record result
+        if: always()
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          mkdir -p rbe-result
+          printf '%s\n' "$SMOKE_OUTCOME" > rbe-result/status
+
+      - name: Publish completion signal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DONE_ARTIFACT }}
+          path: rbe-result/status
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Show coordinator logs
+        if: always()
+        working-directory: rbe
+        run: |
+          docker logs rbe-cloudflared || true
+          docker compose -f coordinator.compose.yml ps
+          docker compose -f coordinator.compose.yml logs
+
+      - name: Require successful remote execution
+        if: always() && steps.smoke.outcome != 'success'
+        run: exit 1
+
+  workers:
+    name: worker-${{ matrix.worker }}
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
+      CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
+      DONE_ARTIFACT: rbe-finished-${{ github.run_id }}
+      RBE_TUNNEL_HOSTNAME: ${{ vars.RBE_TUNNEL_HOSTNAME }}
+      RBE_WORKER_ID: ${{ matrix.worker }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build remote runner image
+        working-directory: rbe
+        run: |
+          docker build \
+            --file SmokeRunner.Containerfile \
+            --tag ungoogled-chromium-alpine-rbe \
+            .
+
+      - name: Start worker
+        working-directory: rbe
+        run: |
+          mkdir -p volumes/bb volumes/worker/build volumes/worker/cache
+          chmod 0777 volumes/bb volumes/worker volumes/worker/build
+          chmod 0700 volumes/worker/cache
+          docker compose -f worker.compose.yml up --detach
+
+      - name: Wait for coordinator
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 25); do
+            artifact_id=$(
+              gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+                --jq ".artifacts[] | select(.name == \"${DONE_ARTIFACT}\") | .id" \
+                | head -n 1
+            )
+            if [[ -n "$artifact_id" ]]; then
+              gh run download "$GITHUB_RUN_ID" \
+                --name "$DONE_ARTIFACT" \
+                --dir rbe-result
+              exit 0
+            fi
+            echo "Coordinator still running (poll $attempt/25)"
+            sleep 60
+          done
+          echo "Coordinator did not publish its completion signal" >&2
+          exit 1
+
+      - name: Show worker logs
+        if: always()
+        working-directory: rbe
+        run: |
+          docker compose -f worker.compose.yml ps
+          docker compose -f worker.compose.yml logs

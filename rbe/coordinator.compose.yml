@@ -1,0 +1,32 @@
+services:
+  storage:
+    image: ghcr.io/buildbarn/bb-storage:20260609T094425Z-10acc76
+    command: ["/config/storage.jsonnet"]
+    volumes:
+      - ./config:/config:ro
+      - ./volumes/storage-ac:/storage-ac
+      - ./volumes/storage-cas:/storage-cas
+      - ./volumes/storage-fsac:/storage-fsac
+
+  scheduler:
+    image: ghcr.io/buildbarn/bb-scheduler:20260527T162223Z-c48dcda
+    command: ["/config/scheduler.jsonnet"]
+    volumes:
+      - ./config:/config:ro
+
+  frontend:
+    image: ghcr.io/buildbarn/bb-storage:20260609T094425Z-10acc76
+    command: ["/config/frontend.jsonnet"]
+    volumes:
+      - ./config:/config:ro
+
+  router:
+    image: envoyproxy/envoy:v1.31-latest
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+    ports:
+      - "127.0.0.1:8980:8980"
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on:
+      - frontend
+      - scheduler

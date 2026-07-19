@@ -1,0 +1,3 @@
+load(":smoke_actions.bzl", "smoke_actions")
+
+smoke_actions()

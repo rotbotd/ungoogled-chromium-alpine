@@ -1,0 +1,48 @@
+services:
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command:
+      - access
+      - tcp
+      - --hostname
+      - ${RBE_TUNNEL_HOSTNAME}
+      - --url
+      - 0.0.0.0:18980
+    environment:
+      TUNNEL_SERVICE_TOKEN_ID: ${CLOUDFLARE_ACCESS_CLIENT_ID}
+      TUNNEL_SERVICE_TOKEN_SECRET: ${CLOUDFLARE_ACCESS_CLIENT_SECRET}
+    restart: unless-stopped
+
+  runner-installer:
+    image: ghcr.io/buildbarn/bb-runner-installer:20260527T162223Z-c48dcda
+    volumes:
+      - ./volumes/bb:/bb
+
+  worker:
+    image: ghcr.io/buildbarn/bb-worker:20260527T162223Z-c48dcda
+    command: ["/config/worker.jsonnet"]
+    environment:
+      GITHUB_RUN_ID: ${GITHUB_RUN_ID}
+      RBE_WORKER_ID: ${RBE_WORKER_ID}
+    volumes:
+      - ./config:/config:ro
+      - ./volumes/worker:/worker
+    depends_on:
+      - tunnel
+      - runner
+    restart: unless-stopped
+
+  runner:
+    image: ungoogled-chromium-alpine-rbe
+    command:
+      - sh
+      - -c
+      - while ! test -f /bb/installed; do sleep 1; done; exec /bb/bb_runner /config/runner.jsonnet
+    network_mode: none
+    volumes:
+      - ./config:/config:ro
+      - ./volumes/bb:/bb
+      - ./volumes/worker:/worker
+    depends_on:
+      - runner-installer
+    restart: unless-stopped
