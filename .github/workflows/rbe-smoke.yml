@@ -1,9 +1,6 @@
 name: Cloudflare RBE smoke test
 
 on:
-  push:
-    branches:
-      - experiment/cloudflare-rbe
   workflow_dispatch:
 
 permissions:
