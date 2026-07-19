@@ -14,7 +14,7 @@ def init(ctx):
         "rules": [{
             "name": "system-clang/cxx",
             "action": "cxx",
-            "command_prefix": "/usr/lib/llvm22/bin/clang++ ",
+            "command_prefix": "clang++ ",
             "remote": True,
             "timeout": "2m",
             "use_system_input": True,
