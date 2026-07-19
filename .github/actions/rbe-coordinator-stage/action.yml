@@ -55,7 +55,7 @@ runs:
 
     - name: Download previous checkpoint
       if: inputs.previous-checkpoint != ''
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.previous-checkpoint }}
         path: input
@@ -203,7 +203,7 @@ runs:
 
     - name: Upload compilation checkpoint
       if: steps.result.outputs.state == 'checkpoint'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: rbe-progress-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
         path: |
@@ -217,7 +217,7 @@ runs:
 
     - name: Upload APK packages
       if: steps.result.outputs.finished == 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: distributed-packages-${{ inputs.target }}
         path: output/
@@ -227,7 +227,7 @@ runs:
 
     - name: Upload failed build log
       if: steps.result.outputs.state == 'failure'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: rbe-failure-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
         path: progress/siso-build.log
@@ -263,7 +263,7 @@ runs:
 
     - name: Publish completion signal
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: rbe-finished-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
         path: progress/stage-status

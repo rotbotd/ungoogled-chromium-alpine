@@ -36,7 +36,7 @@ runs:
 
     - name: Download previous checkpoint
       if: inputs.previous-finished != 'true' && inputs.progress-name != ''
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.progress-name }}
         path: input
@@ -80,7 +80,7 @@ runs:
 
     - name: Upload compilation checkpoint
       if: steps.result.outputs.finished != 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: progress-${{ github.run_id }}-${{ inputs.stage-number }}
         path: |
@@ -92,7 +92,7 @@ runs:
 
     - name: Upload APK packages
       if: inputs.previous-finished != 'true' && steps.result.outputs.finished == 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: packages
         path: output/
