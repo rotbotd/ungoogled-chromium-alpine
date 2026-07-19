@@ -16,7 +16,7 @@ inputs:
     description: Maximum time spent in the Siso build
     required: true
   expected-workers:
-    description: Number of Buildbarn workers required before compiling
+    description: Number of GitHub Actions worker jobs required before compiling
     required: true
   dry-run:
     description: Create a synthetic checkpoint without compiling Chromium
@@ -143,8 +143,11 @@ runs:
     - name: Wait for remote workers
       shell: bash
       env:
-        EXPECTED_WORKERS: ${{ inputs.expected-workers }}
+        EXPECTED_WORKER_JOBS: ${{ inputs.expected-workers }}
       run: |
+        # Each worker job exposes four scheduler slots in worker.jsonnet.
+        worker_slots_per_job=4
+        expected_worker_slots=$((EXPECTED_WORKER_JOBS * worker_slots_per_job))
         stable_polls=0
         for attempt in $(seq 1 120); do
           metrics=$(curl --fail --silent --show-error \
@@ -167,15 +170,15 @@ runs:
           )
           connected=$((created - removed))
 
-          if (( connected >= EXPECTED_WORKERS )); then
+          if (( connected >= expected_worker_slots )); then
             stable_polls=$((stable_polls + 1))
-            echo "Buildbarn reports $connected/$EXPECTED_WORKERS workers ($stable_polls/3 stable polls)"
+            echo "Buildbarn reports $connected/$expected_worker_slots worker slots ($stable_polls/3 stable polls)"
             if (( stable_polls >= 3 )); then
               exit 0
             fi
           else
             stable_polls=0
-            echo "Waiting for Buildbarn workers: $connected/$EXPECTED_WORKERS ($attempt/120)"
+            echo "Waiting for Buildbarn worker slots: $connected/$expected_worker_slots ($attempt/120)"
           fi
           sleep 10
         done
@@ -184,7 +187,7 @@ runs:
           | grep -E 'buildbarn_builder_in_memory_build_queue_workers_(created|removed)_total' \
           || true
         docker compose -f rbe/coordinator.compose.yml logs scheduler router || true
-        echo "Expected $EXPECTED_WORKERS Buildbarn workers did not connect" >&2
+        echo "Expected $expected_worker_slots Buildbarn worker slots did not connect" >&2
         exit 1
 
     - name: Build packages with remote workers
