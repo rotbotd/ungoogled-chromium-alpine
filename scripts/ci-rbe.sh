@@ -58,7 +58,9 @@ GOTOOLCHAIN=auto GOBIN=/usr/local/bin \
 	go install go.chromium.org/build/siso@v1.5.16
 siso version
 
+resumed=0
 if [ -f "$input_dir/package.tar.zst" ]; then
+	resumed=1
 	echo "Restoring the previous package-tree checkpoint"
 	(
 		cd "$input_dir"
@@ -88,6 +90,7 @@ timeout -k 10m -s TERM "$stage_timeout" \
 		SISO_REAPI_ADDRESS='${SISO_REAPI_ADDRESS:-127.0.0.1:8980}' \
 		SISO_REAPI_INSTANCE='${SISO_REAPI_INSTANCE:-alpine}' \
 		SISO_REMOTE_JOBS='${SISO_REMOTE_JOBS:-16}' \
+		SISO_RBE_RESUMED='$resumed' \
 		abuild -K build" > "$build_log" 2>&1 &
 build_pid=$!
 

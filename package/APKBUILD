@@ -689,17 +689,12 @@ prepare() {
 	_configure
 }
 
-_configure() {
-	cd "$builddir"
-
-	##############################################################
-	# Please dont use these keys outside of Alpine Linux project #
-	# You can create your own at:                                #
-	# http://www.chromium.org/developers/how-tos/api-keys        #
-	##############################################################
-	local _google_api_key=""
-	local _google_default_client_id=""
-	local _google_default_client_secret=""
+# GN may regenerate Ninja files during a resumed Siso build.
+_set_build_env() {
+	if [ "${_chromium_build_env_set:-0}" = 1 ]; then
+		return
+	fi
+	_chromium_build_env_set=1
 
 	export CFLAGS="${CFLAGS/-g/} -O2 -Wno-unknown-warning-option -Wno-builtin-macro-redefined -Wno-deprecated-declarations -Wno-shift-count-overflow -Wno-ignored-attributes"
 	export CXXFLAGS="${CXXFLAGS/-g/} -O2 -Wno-unknown-warning-option -Wno-builtin-macro-redefined -Wno-deprecated-declarations -Wno-invalid-constexpr"
@@ -716,6 +711,20 @@ _configure() {
 	export CC="/usr/lib/llvm$_llvmver/bin/clang"
 	export CXX="/usr/lib/llvm$_llvmver/bin/clang++"
 	export NM="/usr/lib/llvm$_llvmver/bin/llvm-nm"
+}
+
+_configure() {
+	cd "$builddir"
+	_set_build_env
+
+	##############################################################
+	# Please dont use these keys outside of Alpine Linux project #
+	# You can create your own at:                                #
+	# http://www.chromium.org/developers/how-tos/api-keys        #
+	##############################################################
+	local _google_api_key=""
+	local _google_default_client_id=""
+	local _google_default_client_secret=""
 
 	msg "Configuring build"
 
@@ -838,6 +847,7 @@ _configure() {
 
 build() {
 	msg "Ninja turtles GO!"
+	_set_build_env
 
 	# final link needs lots of file descriptors
 	ulimit -n 4096
@@ -857,6 +867,16 @@ build() {
 	fi
 
 	if [ "${SISO_RBE:-0}" = 1 ]; then
+		if [ "${SISO_RBE_RESUMED:-0}" = 1 ]; then
+			msg "Regenerating build manifest for restored checkpoint"
+			gn gen out/bld
+			if ! grep -Fq "$CC -MD" out/bld/toolchain.ninja \
+					|| ! grep -Fq "$CXX -MD" out/bld/toolchain.ninja; then
+				error "Restored build manifest does not use the configured Clang toolchain"
+				return 1
+			fi
+		fi
+
 		RBE_service_no_security=true \
 			siso ninja \
 				-C out/bld \
