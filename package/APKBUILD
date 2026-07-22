@@ -984,8 +984,6 @@ package() {
 	install -Dm755 "$srcdir"/chromium-launcher.sh \
 		-t "$pkgdir"/usr/lib/$pkgname/
 
-	cp -a MEIPreload "$pkgdir"/usr/lib/$pkgname/
-
 	# It is important that we name the target "chromium-browser",
 	# xdg-utils expect it; bug https://bugs.gentoo.org/355517
 	ln -sfv ../lib/$pkgname/chromium-launcher.sh "$pkgdir"/usr/bin/chromium-browser
@@ -1059,6 +1057,7 @@ common() {
 
 qt6() {
 	pkgdesc="chromium qt6 shim"
+	depends="$pkgname=$pkgver-r$pkgrel"
 
 	amove usr/lib/$pkgname/libqt6_shim.so
 }
