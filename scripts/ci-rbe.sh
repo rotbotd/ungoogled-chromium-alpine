@@ -84,14 +84,15 @@ du -sh "$package_dir/src"
 
 echo "Building Chromium with distributed Siso execution for up to $stage_timeout"
 set +e
-timeout -k 10m -s TERM "$stage_timeout" \
-	su builder -c "cd '$package_dir' && \
-		SISO_RBE=1 \
-		SISO_REAPI_ADDRESS='${SISO_REAPI_ADDRESS:-127.0.0.1:8980}' \
-		SISO_REAPI_INSTANCE='${SISO_REAPI_INSTANCE:-alpine}' \
-		SISO_REMOTE_JOBS='${SISO_REMOTE_JOBS:-16}' \
-		SISO_RBE_RESUMED='$resumed' \
-		abuild -K build" > "$build_log" 2>&1 &
+su builder -c "cd '$package_dir' && \
+	exec timeout -k 10m -s TERM '$stage_timeout' \
+		env \
+			SISO_RBE=1 \
+			SISO_REAPI_ADDRESS='${SISO_REAPI_ADDRESS:-127.0.0.1:8980}' \
+			SISO_REAPI_INSTANCE='${SISO_REAPI_INSTANCE:-alpine}' \
+			SISO_REMOTE_JOBS='${SISO_REMOTE_JOBS:-16}' \
+			SISO_RBE_RESUMED='$resumed' \
+			abuild -K build" > "$build_log" 2>&1 &
 build_pid=$!
 
 report_progress() {
