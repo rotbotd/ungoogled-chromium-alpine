@@ -85,15 +85,32 @@ du -sh "$package_dir/src"
 echo "Building Chromium with distributed Siso execution for up to $stage_timeout"
 set +e
 su builder -c "cd '$package_dir' && \
-	exec timeout -k 10m -s TERM '$stage_timeout' \
-		env \
-			SISO_RBE=1 \
-			SISO_REAPI_ADDRESS='${SISO_REAPI_ADDRESS:-127.0.0.1:8980}' \
-			SISO_REAPI_INSTANCE='${SISO_REAPI_INSTANCE:-alpine}' \
-			SISO_REMOTE_JOBS='${SISO_REMOTE_JOBS:-16}' \
-			SISO_RBE_RESUMED='$resumed' \
-			abuild -K build" > "$build_log" 2>&1 &
+	exec env \
+		SISO_RBE=1 \
+		SISO_REAPI_ADDRESS='${SISO_REAPI_ADDRESS:-127.0.0.1:8980}' \
+		SISO_REAPI_INSTANCE='${SISO_REAPI_INSTANCE:-alpine}' \
+		SISO_REMOTE_JOBS='${SISO_REMOTE_JOBS:-16}' \
+		SISO_RBE_RESUMED='$resumed' \
+		abuild -K build" > "$build_log" 2>&1 &
 build_pid=$!
+timeout_marker=$progress_dir/stage-timed-out
+rm -f "$timeout_marker"
+(
+	sleep "$stage_timeout"
+	touch "$timeout_marker"
+	echo "Stage deadline reached; requesting a graceful Siso shutdown"
+	if ! pkill -TERM -x siso; then
+		echo "No Siso process found at the stage deadline" >&2
+		kill -TERM "$build_pid" 2>/dev/null || true
+	fi
+	sleep 10m
+	if kill -0 "$build_pid" 2>/dev/null; then
+		echo "Siso did not stop within 10 minutes; forcing shutdown" >&2
+		pkill -KILL -x siso 2>/dev/null || true
+		kill -KILL "$build_pid" 2>/dev/null || true
+	fi
+) &
+watchdog_pid=$!
 
 report_progress() {
 	while sleep 300; do
@@ -109,6 +126,11 @@ reporter_pid=$!
 
 wait "$build_pid"
 status=$?
+kill "$watchdog_pid" 2>/dev/null || true
+wait "$watchdog_pid" 2>/dev/null || true
+if [ -f "$timeout_marker" ]; then
+	status=124
+fi
 kill "$reporter_pid" 2>/dev/null || true
 wait "$reporter_pid" 2>/dev/null || true
 set -e
