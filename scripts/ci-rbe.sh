@@ -37,7 +37,7 @@ if [ "${CI_RBE_DRY_RUN:-0}" = 1 ]; then
 		mkdir -p "$package_dir/src"
 	fi
 	printf '%s\n' "$stage_number" > "$package_dir/src/.rbe-dry-run-stage"
-	tar -I 'zstd -T0 -1' \
+	tar --format=posix -I 'zstd -T0 -1' \
 		-cf "$progress_dir/package.tar.zst" \
 		-C "$package_dir" src
 	(
@@ -169,7 +169,7 @@ case "$status" in
 		exit 1
 	fi
 	echo "Siso outputs materialized; creating a resumable package-tree checkpoint"
-	tar --sparse -I 'zstd -T0 -3' \
+	tar --sparse --format=posix -I 'zstd -T0 -3' \
 		-cf "$progress_dir/package.tar.zst" \
 		-C "$package_dir" src
 	(

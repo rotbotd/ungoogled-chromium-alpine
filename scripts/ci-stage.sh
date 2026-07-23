@@ -52,7 +52,8 @@ case "$status" in
 	;;
 124)
 	echo "Stage timed out; creating a resumable checkpoint"
-	tar -I 'zstd -T0 -3' -cf "$progress_dir/progress.tar.zst" \
+	tar --format=posix -I 'zstd -T0 -3' \
+		-cf "$progress_dir/progress.tar.zst" \
 		-C "$package_dir" src
 	(
 		cd "$progress_dir"
