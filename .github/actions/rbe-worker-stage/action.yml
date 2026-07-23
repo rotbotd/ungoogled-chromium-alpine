@@ -56,24 +56,44 @@ runs:
         READY_ARTIFACT: rbe-ready-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
         GH_TOKEN: ${{ github.token }}
       run: |
+        api_failures=0
         completed_polls=0
         for attempt in $(seq 1 120); do
-          artifact_id=$(
+          if ! artifact_id=$(
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
               --jq ".artifacts[] | select(.name == \"${READY_ARTIFACT}\") | .id" \
               | head -n 1
-          )
+          ); then
+            api_failures=$((api_failures + 1))
+            echo "::warning::GitHub API artifact poll failed (${api_failures}/5)"
+            if (( api_failures >= 5 )); then
+              echo "GitHub API remained unavailable while waiting for ${READY_ARTIFACT}" >&2
+              exit 1
+            fi
+            sleep 10
+            continue
+          fi
           if [[ -n "$artifact_id" ]]; then
             echo "Coordinator tunnel is registered with Cloudflare"
             exit 0
           fi
 
-          coordinator_state=$(
+          if ! coordinator_state=$(
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" \
               --paginate \
               --jq ".jobs[] | select(.name == \"${COORDINATOR_JOB_NAME}\" or (.name | endswith(\" / ${COORDINATOR_JOB_NAME}\"))) | [.status, (.conclusion // \"\")] | @tsv" \
               | tail -n 1
-          )
+          ); then
+            api_failures=$((api_failures + 1))
+            echo "::warning::GitHub API coordinator poll failed (${api_failures}/5)"
+            if (( api_failures >= 5 )); then
+              echo "GitHub API remained unavailable while checking ${COORDINATOR_JOB_NAME}" >&2
+              exit 1
+            fi
+            sleep 10
+            continue
+          fi
+          api_failures=0
           if [[ "$coordinator_state" == completed$'\t'* ]]; then
             completed_polls=$((completed_polls + 1))
             if (( completed_polls >= 3 )); then
@@ -106,27 +126,56 @@ runs:
         DONE_ARTIFACT: rbe-finished-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
         GH_TOKEN: ${{ github.token }}
       run: |
+        api_failures=0
         completed_polls=0
         for attempt in $(seq 1 350); do
-          artifact_id=$(
+          if ! artifact_id=$(
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
               --jq ".artifacts[] | select(.name == \"${DONE_ARTIFACT}\") | .id" \
               | head -n 1
-          )
+          ); then
+            api_failures=$((api_failures + 1))
+            echo "::warning::GitHub API artifact poll failed (${api_failures}/5)"
+            if (( api_failures >= 5 )); then
+              echo "GitHub API remained unavailable while waiting for ${DONE_ARTIFACT}" >&2
+              exit 1
+            fi
+            sleep 60
+            continue
+          fi
           if [[ -n "$artifact_id" ]]; then
-            gh run download "$GITHUB_RUN_ID" \
+            if ! gh run download "$GITHUB_RUN_ID" \
               --name "$DONE_ARTIFACT" \
-              --dir rbe-result
+              --dir rbe-result; then
+              api_failures=$((api_failures + 1))
+              echo "::warning::GitHub completion artifact download failed (${api_failures}/5)"
+              if (( api_failures >= 5 )); then
+                echo "GitHub remained unavailable while downloading ${DONE_ARTIFACT}" >&2
+                exit 1
+              fi
+              sleep 60
+              continue
+            fi
             cat rbe-result/stage-status
             exit 0
           fi
 
-          coordinator_state=$(
+          if ! coordinator_state=$(
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" \
               --paginate \
               --jq ".jobs[] | select(.name == \"${COORDINATOR_JOB_NAME}\" or (.name | endswith(\" / ${COORDINATOR_JOB_NAME}\"))) | [.status, (.conclusion // \"\")] | @tsv" \
               | tail -n 1
-          )
+          ); then
+            api_failures=$((api_failures + 1))
+            echo "::warning::GitHub API coordinator poll failed (${api_failures}/5)"
+            if (( api_failures >= 5 )); then
+              echo "GitHub API remained unavailable while checking ${COORDINATOR_JOB_NAME}" >&2
+              exit 1
+            fi
+            sleep 60
+            continue
+          fi
+          api_failures=0
           if [[ "$coordinator_state" == completed$'\t'* ]]; then
             completed_polls=$((completed_polls + 1))
             if (( completed_polls >= 3 )); then
