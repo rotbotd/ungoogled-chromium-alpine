@@ -126,7 +126,26 @@ case "$status" in
 	touch "$progress_dir/finished"
 	;;
 124)
-	echo "Stage timed out; creating a resumable package-tree checkpoint"
+	echo "Stage timed out; materializing Siso outputs for the checkpoint"
+	source_dir=$(find "$package_dir/src" -mindepth 1 -maxdepth 1 \
+		-type d -name 'chromium-*' -print -quit)
+	if [ -z "$source_dir" ]; then
+		echo "Unable to locate the restored Chromium source tree" >&2
+		exit 1
+	fi
+	if ! as_builder "cd '$source_dir' && \
+		RBE_service_no_security=true \
+		siso fs flush \
+			-C out/bld \
+			-reapi_address '${SISO_REAPI_ADDRESS:-127.0.0.1:8980}' \
+			-reapi_grpc_conn_pool 1 \
+			-reapi_instance '${SISO_REAPI_INSTANCE:-alpine}' \
+			." > "$progress_dir/siso-flush.log" 2>&1; then
+		tail -n 100 "$progress_dir/siso-flush.log" >&2 || true
+		echo "Failed to materialize Siso outputs from the live CAS" >&2
+		exit 1
+	fi
+	echo "Siso outputs materialized; creating a resumable package-tree checkpoint"
 	tar --sparse -I 'zstd -T0 -3' \
 		-cf "$progress_dir/package.tar.zst" \
 		-C "$package_dir" src

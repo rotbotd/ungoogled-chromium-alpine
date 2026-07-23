@@ -299,12 +299,12 @@ runs:
         compression-level: 0
         if-no-files-found: error
 
-    - name: Upload failed build log
+    - name: Upload failed build logs
       if: steps.result.outputs.state == 'failure'
       uses: actions/upload-artifact@v7
       with:
         name: rbe-failure-${{ github.run_id }}-${{ inputs.target }}-${{ inputs.stage-number }}
-        path: progress/siso-build.log
+        path: progress/*.log
         retention-days: 3
         if-no-files-found: ignore
 
